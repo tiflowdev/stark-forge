@@ -1,0 +1,3 @@
+# StarkForge
+
+StarkForge is a decentralized media licensing marketplace that enables creators to monetize intellectual property through programmable usage rights encoded in Dynamic License NFTs (DL-NFTs). The platform leverages zero-knowledge proofs to verify content authenticity and compliance while maintaining privacy, and implements a Content Provenance Graph to automatically distribute royalties across derivative works and remix chains. Built with smart contract automation, AI-powered license matching, and reputation staking mechanisms, StarkForge transforms traditional licensing by providing granular control over usage permissions, dynamic pricing, and decentralized dispute resolution.
