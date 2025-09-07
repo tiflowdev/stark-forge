@@ -1,344 +1,530 @@
-;; StarkForge Dynamic Media Licensing Marketplace Protocol
+;; MediaForge Protocol - Dynamic Content Licensing & Creator Economy Platform
 
-;; Error Constants
-(define-constant ERR-NOT-AUTHORIZED (err u1000))
-(define-constant ERR-INSUFFICIENT-BALANCE (err u1001))
-(define-constant ERR-INVALID-AMOUNT (err u1002))
-(define-constant ERR-PROTOCOL-PAUSED (err u1003))
-(define-constant ERR-INSUFFICIENT-STAKE (err u1004))
-(define-constant ERR-INVALID-REPUTATION-SCORE (err u1005))
-(define-constant ERR-MARKET-VOLATILITY-HIGH (err u1006))
-(define-constant ERR-CIRCUIT-BREAKER-ACTIVE (err u1007))
-(define-constant ERR-INVALID-LICENSE-ID (err u1008))
-(define-constant ERR-USER-NOT-FOUND (err u1009))
-(define-constant ERR-TIMELOCK-ACTIVE (err u1010))
-(define-constant ERR-INVALID-GOVERNANCE-PROPOSAL (err u1011))
-(define-constant ERR-INVALID-STRATEGY (err u1012))
+;; === ERROR CODES ===
+(define-constant ERR-UNAUTHORIZED (err u1001))
+(define-constant ERR-INSUFFICIENT-FUNDS (err u1002))
+(define-constant ERR-INVALID-INPUT (err u1003))
+(define-constant ERR-PROTOCOL-FROZEN (err u1004))
+(define-constant ERR-COLLATERAL-SHORTAGE (err u1005))
+(define-constant ERR-REPUTATION-TOO-LOW (err u1006))
+(define-constant ERR-MARKET-INSTABILITY (err u1007))
+(define-constant ERR-EMERGENCY-HALT (err u1008))
+(define-constant ERR-LICENSE-NOT-FOUND (err u1009))
+(define-constant ERR-CREATOR-NOT-REGISTERED (err u1010))
+(define-constant ERR-GOVERNANCE-LOCKED (err u1011))
+(define-constant ERR-PROPOSAL-INVALID (err u1012))
+(define-constant ERR-STRATEGY-UNSUPPORTED (err u1013))
+(define-constant ERR-COOLDOWN-ACTIVE (err u1014))
 
-;; Protocol Constants
-(define-constant CONTRACT-OWNER tx-sender)
-(define-constant MIN-STAKE-RATIO u150) ;; 150%
-(define-constant MAX-REPUTATION-SCORE u1000)
-(define-constant VOLATILITY-THRESHOLD u500) ;; 5%
-(define-constant CIRCUIT-BREAKER-THRESHOLD u2000) ;; 20%
-(define-constant TIMELOCK-PERIOD u1440) ;; 24 hours in blocks
-(define-constant MIN-LICENSE-DEPOSIT u1000) ;; Minimum license deposit
+;; === PROTOCOL PARAMETERS ===
+(define-constant DEPLOYER tx-sender)
+(define-constant MINIMUM-COLLATERAL-RATIO u200) ;; 200%
+(define-constant REPUTATION-CAP u10000)
+(define-constant INSTABILITY-LIMIT u750) ;; 7.5%
+(define-constant EMERGENCY-THRESHOLD u1500) ;; 15%
+(define-constant GOVERNANCE-DELAY u2016) ;; ~2 weeks in blocks
+(define-constant MIN-LICENSE-VALUE u500)
+(define-constant COOLDOWN-BLOCKS u144) ;; ~24 hours
 
-;; Data Variables
-(define-data-var protocol-paused bool false)
-(define-data-var total-stark-supply uint u0)
-(define-data-var total-forge-supply uint u0)
-(define-data-var total-rights-supply uint u0)
-(define-data-var current-volatility uint u0)
-(define-data-var dynamic-pricing-mode bool false)
-(define-data-var circuit-breaker-active bool false)
-(define-data-var last-stability-check uint u0)
-(define-data-var base-stake-ratio uint u150)
-(define-data-var emergency-admin (optional principal) none)
-(define-data-var governance-timelock uint u0)
-(define-data-var next-license-id uint u1)
-(define-data-var next-proposal-id uint u1)
+;; === STATE VARIABLES ===
+(define-data-var protocol-active bool true)
+(define-data-var forge-token-supply uint u0)
+(define-data-var media-token-supply uint u0)
+(define-data-var licensing-token-supply uint u0)
+(define-data-var market-instability uint u0)
+(define-data-var adaptive-pricing bool true)
+(define-data-var emergency-mode bool false)
+(define-data-var last-market-check uint u0)
+(define-data-var collateral-multiplier uint u200)
+(define-data-var protocol-guardian (optional principal) none)
+(define-data-var governance-delay-end uint u0)
+(define-data-var license-registry-counter uint u1)
+(define-data-var proposal-counter uint u1)
 
-;; Data Maps
-(define-map creator-reputation-scores principal uint)
-(define-map creator-balances-stark principal uint)
-(define-map creator-balances-forge principal uint)
-(define-map creator-balances-rights principal uint)
-(define-map creator-staking-history principal 
+;; === DATA STRUCTURES ===
+(define-map creator-profiles principal 
   {
-    total-staked: uint, 
-    stake-duration: uint, 
-    last-stake-block: uint
+    reputation: uint,
+    total-staked: uint,
+    stake-start: uint,
+    last-activity: uint,
+    verified: bool
   })
-(define-map creator-stake-positions principal 
-  {
-    stake-amount: uint, 
-    license-amount: uint, 
-    stake-ratio: uint
-  })
-(define-map dynamic-license-vaults uint 
-  {
-    owner: principal, 
-    balance: uint, 
-    strategy: (string-ascii 50), 
-    last-rebalance: uint, 
-    yield-rate: uint,
-    created-at: uint
-  })
-(define-map license-counter principal uint)
-(define-map market-volatility-data uint 
-  {
-    volatility-score: uint, 
-    timestamp: uint, 
-    market-cap: uint
-  })
-(define-map governance-proposals uint 
-  {
-    proposer: principal, 
-    description: (string-ascii 500), 
-    votes-for: uint, 
-    votes-against: uint, 
-    executed: bool,
-    created-at: uint,
-    voting-deadline: uint
-  })
-(define-map creator-governance-power principal uint)
-(define-map valid-strategies (string-ascii 50) bool)
 
-;; Authorization Functions
-(define-private (is-contract-owner)
-  (is-eq tx-sender CONTRACT-OWNER))
+(define-map token-balances-forge principal uint)
+(define-map token-balances-media principal uint)
+(define-map token-balances-licensing principal uint)
 
-(define-private (is-emergency-admin)
-  (match (var-get emergency-admin)
+(define-map collateral-positions principal 
+  {
+    locked-amount: uint,
+    minted-tokens: uint,
+    collateral-ratio: uint,
+    liquidation-price: uint
+  })
+
+(define-map license-portfolios uint 
+  {
+    creator: principal,
+    value: uint,
+    investment-strategy: (string-ascii 64),
+    last-yield-claim: uint,
+    annual-yield: uint,
+    portfolio-created: uint,
+    active: bool
+  })
+
+(define-map creator-license-count principal uint)
+
+(define-map market-sentiment-data uint 
+  {
+    instability-level: uint,
+    recorded-at: uint,
+    total-value-locked: uint,
+    price-deviation: uint
+  })
+
+(define-map dao-proposals uint 
+  {
+    author: principal,
+    proposal-text: (string-ascii 512),
+    affirmative-votes: uint,
+    negative-votes: uint,
+    proposal-executed: bool,
+    created-block: uint,
+    voting-ends: uint,
+    execution-delay: uint
+  })
+
+(define-map creator-voting-weight principal uint)
+(define-map investment-strategies (string-ascii 64) bool)
+(define-map creator-cooldowns principal uint)
+
+;; === UTILITY FUNCTIONS ===
+(define-private (is-deployer)
+  (is-eq tx-sender DEPLOYER))
+
+(define-private (is-guardian)
+  (match (var-get protocol-guardian)
     admin (is-eq tx-sender admin)
     false))
 
-(define-private (is-authorized-admin)
-  (or (is-contract-owner) (is-emergency-admin)))
+(define-private (has-admin-privileges)
+  (or (is-deployer) (is-guardian)))
 
-;; Input Validation Functions
-(define-private (validate-amount (amount uint))
+(define-private (valid-amount (amount uint))
   (> amount u0))
 
-(define-private (validate-principal (user principal))
-  (not (is-eq user CONTRACT-OWNER)))
-
-(define-private (check-protocol-status)
+(define-private (protocol-operational)
   (and 
-    (not (var-get protocol-paused)) 
-    (not (var-get circuit-breaker-active))))
+    (var-get protocol-active)
+    (not (var-get emergency-mode))))
 
-(define-private (is-valid-strategy (strategy (string-ascii 50)))
-  (default-to false (map-get? valid-strategies strategy)))
+(define-private (strategy-approved (strategy (string-ascii 64)))
+  (default-to false (map-get? investment-strategies strategy)))
 
-;; Helper function to get minimum of two values
-(define-private (min-uint (a uint) (b uint))
-  (if (<= a b) a b))
+(define-private (get-smaller (x uint) (y uint))
+  (if (<= x y) x y))
 
-;; Reputation Score Calculation
-(define-private (calculate-reputation-score (creator principal))
+(define-private (cooldown-expired (creator principal))
+  (let ((last-cooldown (default-to u0 (map-get? creator-cooldowns creator))))
+    (>= block-height (+ last-cooldown COOLDOWN-BLOCKS))))
+
+;; === REPUTATION & SCORING ===
+(define-private (compute-reputation (creator principal))
   (let (
-    (staking-data (default-to 
-      {total-staked: u0, stake-duration: u0, last-stake-block: u0} 
-      (map-get? creator-staking-history creator)))
-    (governance-power (default-to u0 (map-get? creator-governance-power creator)))
-    (base-score u100)
-    (staking-bonus (/ (get total-staked staking-data) u1000))
-    (duration-bonus (/ (get stake-duration staking-data) u100))
-    (governance-bonus (/ governance-power u10))
-    (total-score (+ base-score staking-bonus duration-bonus governance-bonus))
+    (profile (default-to 
+      {reputation: u0, total-staked: u0, stake-start: u0, last-activity: u0, verified: false}
+      (map-get? creator-profiles creator)))
+    (voting-power (default-to u0 (map-get? creator-voting-weight creator)))
+    (base-points u50)
+    (stake-bonus (/ (get total-staked profile) u2000))
+    (longevity-bonus (/ (- block-height (get stake-start profile)) u500))
+    (governance-bonus (/ voting-power u20))
+    (verification-bonus (if (get verified profile) u100 u0))
+    (final-score (+ base-points stake-bonus longevity-bonus governance-bonus verification-bonus))
   )
-  (min-uint total-score MAX-REPUTATION-SCORE)))
+  (get-smaller final-score REPUTATION-CAP)))
 
-;; Volatility Analysis
-(define-private (analyze-market-volatility)
+;; === MARKET ANALYSIS ===
+(define-private (assess-market-conditions)
   (let (
     (current-block block-height)
-    (last-check (var-get last-stability-check))
-    (volatility-increase (> (- current-block last-check) u100))
+    (previous-check (var-get last-market-check))
+    (time-elapsed (- current-block previous-check))
   )
-  (if volatility-increase
+  (if (> time-elapsed u50)
     (let (
-      (new-volatility (+ (var-get current-volatility) u50))
+      (instability-increase u25)
+      (new-instability (+ (var-get market-instability) instability-increase))
     )
-    (var-set current-volatility new-volatility)
-    (var-set last-stability-check current-block)
-    (if (> new-volatility CIRCUIT-BREAKER-THRESHOLD)
-      (var-set circuit-breaker-active true)
+    (var-set market-instability new-instability)
+    (var-set last-market-check current-block)
+    (if (> new-instability EMERGENCY-THRESHOLD)
+      (var-set emergency-mode true)
       true))
     true)))
 
-;; Dynamic Stake Ratio Calculation
-(define-private (calculate-dynamic-stake-ratio (creator principal))
+;; === DYNAMIC COLLATERAL CALCULATION ===
+(define-private (calculate-collateral-requirement (creator principal))
   (let (
-    (reputation-score (calculate-reputation-score creator))
-    (base-ratio (var-get base-stake-ratio))
-    (volatility (var-get current-volatility))
-    (score-adjustment (/ (* reputation-score u50) MAX-REPUTATION-SCORE))
-    (volatility-adjustment (/ volatility u10))
+    (reputation (compute-reputation creator))
+    (base-multiplier (var-get collateral-multiplier))
+    (market-volatility (var-get market-instability))
+    (reputation-discount (/ (* reputation u30) REPUTATION-CAP))
+    (volatility-premium (/ market-volatility u5))
+    (adjusted-ratio (+ (- base-multiplier reputation-discount) volatility-premium))
   )
-  (+ (- base-ratio score-adjustment) volatility-adjustment)))
+  (get-smaller (if (>= adjusted-ratio u120) adjusted-ratio u120) u300))) ;; Between 120% and 300%
 
-;; Admin Functions
-(define-public (set-emergency-admin (new-admin principal))
+;; === ADMINISTRATIVE FUNCTIONS ===
+(define-public (assign-guardian (new-guardian principal))
   (begin
-    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
-    (var-set emergency-admin (some new-admin))
+    (asserts! (is-deployer) ERR-UNAUTHORIZED)
+    (var-set protocol-guardian (some new-guardian))
     (ok true)))
 
-(define-public (pause-protocol)
+(define-public (freeze-protocol)
   (begin
-    (asserts! (is-authorized-admin) ERR-NOT-AUTHORIZED)
-    (var-set protocol-paused true)
+    (asserts! (has-admin-privileges) ERR-UNAUTHORIZED)
+    (var-set protocol-active false)
     (ok true)))
 
-(define-public (unpause-protocol)
+(define-public (unfreeze-protocol)
   (begin
-    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
-    (var-set protocol-paused false)
-    (var-set circuit-breaker-active false)
+    (asserts! (is-deployer) ERR-UNAUTHORIZED)
+    (var-set protocol-active true)
+    (var-set emergency-mode false)
     (ok true)))
 
-(define-public (update-base-stake-ratio (new-ratio uint))
+(define-public (adjust-collateral-multiplier (new-multiplier uint))
   (begin
-    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
-    (asserts! (>= new-ratio u100) ERR-INVALID-AMOUNT)
-    (asserts! (is-eq (var-get governance-timelock) u0) ERR-TIMELOCK-ACTIVE)
-    (var-set base-stake-ratio new-ratio)
+    (asserts! (is-deployer) ERR-UNAUTHORIZED)
+    (asserts! (>= new-multiplier u100) ERR-INVALID-INPUT)
+    (asserts! (is-eq (var-get governance-delay-end) u0) ERR-GOVERNANCE-LOCKED)
+    (var-set collateral-multiplier new-multiplier)
     (ok true)))
 
-(define-public (activate-circuit-breaker)
+(define-public (trigger-emergency-halt)
   (begin
-    (asserts! (is-authorized-admin) ERR-NOT-AUTHORIZED)
-    (var-set circuit-breaker-active true)
-    (var-set protocol-paused true)
+    (asserts! (has-admin-privileges) ERR-UNAUTHORIZED)
+    (var-set emergency-mode true)
+    (var-set protocol-active false)
     (ok true)))
 
-(define-public (add-strategy (strategy (string-ascii 50)))
+(define-public (register-strategy (strategy (string-ascii 64)))
   (begin
-    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
-    (map-set valid-strategies strategy true)
+    (asserts! (is-deployer) ERR-UNAUTHORIZED)
+    (map-set investment-strategies strategy true)
     (ok true)))
 
-(define-public (remove-strategy (strategy (string-ascii 50)))
+(define-public (deregister-strategy (strategy (string-ascii 64)))
   (begin
-    (asserts! (is-contract-owner) ERR-NOT-AUTHORIZED)
-    (map-delete valid-strategies strategy)
+    (asserts! (is-deployer) ERR-UNAUTHORIZED)
+    (map-delete investment-strategies strategy)
     (ok true)))
 
-;; Core Protocol Functions
-(define-public (mint-stark (stake-amount uint))
+;; === CORE TOKEN MECHANICS ===
+(define-public (mint-forge-tokens (collateral-amount uint))
   (let (
     (creator tx-sender)
-    (reputation-score (calculate-reputation-score creator))
-    (required-ratio (calculate-dynamic-stake-ratio creator))
-    (mint-amount (/ (* stake-amount u100) required-ratio))
+    (reputation (compute-reputation creator))
+    (required-ratio (calculate-collateral-requirement creator))
+    (mintable-amount (/ (* collateral-amount u100) required-ratio))
   )
-  (asserts! (check-protocol-status) ERR-PROTOCOL-PAUSED)
-  (asserts! (validate-amount stake-amount) ERR-INVALID-AMOUNT)
-  (asserts! (>= stake-amount (* mint-amount required-ratio)) ERR-INSUFFICIENT-STAKE)
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (valid-amount collateral-amount) ERR-INVALID-INPUT)
+  (asserts! (>= collateral-amount (* mintable-amount required-ratio)) ERR-COLLATERAL-SHORTAGE)
+  (asserts! (cooldown-expired creator) ERR-COOLDOWN-ACTIVE)
   
-  (analyze-market-volatility)
+  (assess-market-conditions)
   
-  (map-set creator-balances-stark creator 
-           (+ (default-to u0 (map-get? creator-balances-stark creator)) mint-amount))
-  (map-set creator-stake-positions creator 
+  ;; Update balances and positions
+  (map-set token-balances-forge creator 
+           (+ (default-to u0 (map-get? token-balances-forge creator)) mintable-amount))
+  (map-set collateral-positions creator 
            {
-             stake-amount: stake-amount, 
-             license-amount: mint-amount, 
-             stake-ratio: required-ratio
+             locked-amount: collateral-amount,
+             minted-tokens: mintable-amount,
+             collateral-ratio: required-ratio,
+             liquidation-price: (/ (* collateral-amount u80) u100)
            })
-  (var-set total-stark-supply (+ (var-get total-stark-supply) mint-amount))
+  (var-set forge-token-supply (+ (var-get forge-token-supply) mintable-amount))
+  (map-set creator-cooldowns creator block-height)
   
-  (ok mint-amount)))
+  (ok mintable-amount)))
 
-(define-public (redeem-stark (stark-amount uint))
+(define-public (redeem-forge-tokens (token-amount uint))
   (let (
     (creator tx-sender)
-    (creator-balance (default-to u0 (map-get? creator-balances-stark creator)))
-    (position (map-get? creator-stake-positions creator))
+    (current-balance (default-to u0 (map-get? token-balances-forge creator)))
+    (position (map-get? collateral-positions creator))
   )
-  (asserts! (check-protocol-status) ERR-PROTOCOL-PAUSED)
-  (asserts! (validate-amount stark-amount) ERR-INVALID-AMOUNT)
-  (asserts! (>= creator-balance stark-amount) ERR-INSUFFICIENT-BALANCE)
-  (asserts! (is-some position) ERR-USER-NOT-FOUND)
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (valid-amount token-amount) ERR-INVALID-INPUT)
+  (asserts! (>= current-balance token-amount) ERR-INSUFFICIENT-FUNDS)
+  (asserts! (is-some position) ERR-CREATOR-NOT-REGISTERED)
   
   (let (
-    (position-data (unwrap! position ERR-USER-NOT-FOUND))
-    (stake-to-return (/ (* stark-amount (get stake-amount position-data)) 
-                       (get license-amount position-data)))
+    (position-data (unwrap! position ERR-CREATOR-NOT-REGISTERED))
+    (collateral-return (/ (* token-amount (get locked-amount position-data)) 
+                         (get minted-tokens position-data)))
   )
-  (map-set creator-balances-stark creator (- creator-balance stark-amount))
-  (var-set total-stark-supply (- (var-get total-stark-supply) stark-amount))
+  (map-set token-balances-forge creator (- current-balance token-amount))
+  (var-set forge-token-supply (- (var-get forge-token-supply) token-amount))
   
-  (ok stake-to-return))))
+  (ok collateral-return))))
 
-(define-public (stake-forge (amount uint))
+(define-public (stake-media-tokens (amount uint))
   (let (
     (creator tx-sender)
-    (current-balance (default-to u0 (map-get? creator-balances-forge creator)))
-    (current-staking (default-to 
-      {total-staked: u0, stake-duration: u0, last-stake-block: u0} 
-      (map-get? creator-staking-history creator)))
+    (current-balance (default-to u0 (map-get? token-balances-media creator)))
+    (current-profile (default-to 
+      {reputation: u0, total-staked: u0, stake-start: u0, last-activity: u0, verified: false}
+      (map-get? creator-profiles creator)))
   )
-  (asserts! (check-protocol-status) ERR-PROTOCOL-PAUSED)
-  (asserts! (validate-amount amount) ERR-INVALID-AMOUNT)
-  (asserts! (>= current-balance amount) ERR-INSUFFICIENT-BALANCE)
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (valid-amount amount) ERR-INVALID-INPUT)
+  (asserts! (>= current-balance amount) ERR-INSUFFICIENT-FUNDS)
   
-  (map-set creator-balances-forge creator (- current-balance amount))
-  (map-set creator-staking-history creator 
+  (map-set token-balances-media creator (- current-balance amount))
+  (map-set creator-profiles creator 
            {
-             total-staked: (+ (get total-staked current-staking) amount),
-             stake-duration: (+ (get stake-duration current-staking) u1),
-             last-stake-block: block-height
+             reputation: (get reputation current-profile),
+             total-staked: (+ (get total-staked current-profile) amount),
+             stake-start: (if (is-eq (get stake-start current-profile) u0) 
+                            block-height 
+                            (get stake-start current-profile)),
+             last-activity: block-height,
+             verified: (get verified current-profile)
            })
   
-  ;; Update Reputation Score after staking
-  (map-set creator-reputation-scores creator (calculate-reputation-score creator))
+  ;; Recalculate and update reputation
+  (let ((updated-profile (unwrap-panic (map-get? creator-profiles creator))))
+    (map-set creator-profiles creator 
+             (merge updated-profile {reputation: (compute-reputation creator)})))
   
   (ok true)))
 
-(define-public (unstake-forge (amount uint))
+(define-public (unstake-media-tokens (amount uint))
   (let (
     (creator tx-sender)
-    (current-balance (default-to u0 (map-get? creator-balances-forge creator)))
-    (staking-data (map-get? creator-staking-history creator))
+    (current-balance (default-to u0 (map-get? token-balances-media creator)))
+    (profile-data (map-get? creator-profiles creator))
   )
-  (asserts! (check-protocol-status) ERR-PROTOCOL-PAUSED)
-  (asserts! (validate-amount amount) ERR-INVALID-AMOUNT)
-  (asserts! (is-some staking-data) ERR-USER-NOT-FOUND)
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (valid-amount amount) ERR-INVALID-INPUT)
+  (asserts! (is-some profile-data) ERR-CREATOR-NOT-REGISTERED)
+  (asserts! (cooldown-expired creator) ERR-COOLDOWN-ACTIVE)
   
   (let (
-    (staking-info (unwrap! staking-data ERR-USER-NOT-FOUND))
-    (total-staked (get total-staked staking-info))
+    (profile (unwrap! profile-data ERR-CREATOR-NOT-REGISTERED))
+    (total-staked (get total-staked profile))
   )
-  (asserts! (>= total-staked amount) ERR-INSUFFICIENT-BALANCE)
+  (asserts! (>= total-staked amount) ERR-INSUFFICIENT-FUNDS)
   
-  (map-set creator-balances-forge creator (+ current-balance amount))
-  (map-set creator-staking-history creator 
-           {
+  (map-set token-balances-media creator (+ current-balance amount))
+  (map-set creator-profiles creator 
+           (merge profile {
              total-staked: (- total-staked amount),
-             stake-duration: (get stake-duration staking-info),
-             last-stake-block: block-height
-           })
+             last-activity: block-height
+           }))
+  (map-set creator-cooldowns creator block-height)
   
-  ;; Update Reputation Score after unstaking
-  (map-set creator-reputation-scores creator (calculate-reputation-score creator))
+  ;; Update reputation after unstaking
+  (map-set creator-profiles creator 
+           (merge (unwrap-panic (map-get? creator-profiles creator))
+                  {reputation: (compute-reputation creator)}))
   
   (ok true))))
 
-(define-public (create-dynamic-license (initial-deposit uint) (strategy (string-ascii 50)))
+;; === LICENSE PORTFOLIO SYSTEM ===
+(define-public (create-license-portfolio (initial-investment uint) (strategy (string-ascii 64)))
   (let (
     (creator tx-sender)
-    (license-id (var-get next-license-id))
-    (creator-balance (default-to u0 (map-get? creator-balances-stark creator)))
+    (portfolio-id (var-get license-registry-counter))
+    (creator-balance (default-to u0 (map-get? token-balances-forge creator)))
   )
-  (asserts! (check-protocol-status) ERR-PROTOCOL-PAUSED)
-  (asserts! (validate-amount initial-deposit) ERR-INVALID-AMOUNT)
-  (asserts! (>= initial-deposit MIN-LICENSE-DEPOSIT) ERR-INVALID-AMOUNT)
-  (asserts! (>= creator-balance initial-deposit) ERR-INSUFFICIENT-BALANCE)
-  (asserts! (is-valid-strategy strategy) ERR-INVALID-STRATEGY)
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (valid-amount initial-investment) ERR-INVALID-INPUT)
+  (asserts! (>= initial-investment MIN-LICENSE-VALUE) ERR-INVALID-INPUT)
+  (asserts! (>= creator-balance initial-investment) ERR-INSUFFICIENT-FUNDS)
+  (asserts! (strategy-approved strategy) ERR-STRATEGY-UNSUPPORTED)
   
-  ;; Deduct balance and create license
-  (map-set creator-balances-stark creator (- creator-balance initial-deposit))
-  (map-set dynamic-license-vaults license-id 
+  ;; Transfer tokens and create portfolio
+  (map-set token-balances-forge creator (- creator-balance initial-investment))
+  (map-set license-portfolios portfolio-id 
            {
-             owner: creator,
-             balance: initial-deposit,
-             strategy: strategy,
-             last-rebalance: block-height,
-             yield-rate: u0,
-             created-at: block-height
+             creator: creator,
+             value: initial-investment,
+             investment-strategy: strategy,
+             last-yield-claim: block-height,
+             annual-yield: u0,
+             portfolio-created: block-height,
+             active: true
            })
   
-  ;; Update license counter for creator
-  (map-set license-counter creator 
-           (+ (default-to u0 (map-get? license-counter creator)) u1))
+  ;; Update creator's portfolio count
+  (map-set creator-license-count creator 
+           (+ (default-to u0 (map-get? creator-license-count creator)) u1))
   
-  ;; Increment global license ID
-  (var-set next-license-id (+ license-id u1))
+  ;; Increment global counter
+  (var-set license-registry-counter (+ portfolio-id u1))
   
-  (ok license-id)))
+  (ok portfolio-id)))
 
-(define-public (deposit-to-license (license
+(define-public (add-to-portfolio (portfolio-id uint) (additional-amount uint))
+  (let (
+    (creator tx-sender)
+    (creator-balance (default-to u0 (map-get? token-balances-forge creator)))
+    (portfolio-data (map-get? license-portfolios portfolio-id))
+  )
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (valid-amount additional-amount) ERR-INVALID-INPUT)
+  (asserts! (>= creator-balance additional-amount) ERR-INSUFFICIENT-FUNDS)
+  (asserts! (is-some portfolio-data) ERR-LICENSE-NOT-FOUND)
+  
+  (let (
+    (portfolio (unwrap! portfolio-data ERR-LICENSE-NOT-FOUND))
+  )
+  (asserts! (is-eq (get creator portfolio) creator) ERR-UNAUTHORIZED)
+  (asserts! (get active portfolio) ERR-LICENSE-NOT-FOUND)
+  
+  ;; Transfer funds and update portfolio
+  (map-set token-balances-forge creator (- creator-balance additional-amount))
+  (map-set license-portfolios portfolio-id 
+           (merge portfolio {value: (+ (get value portfolio) additional-amount)}))
+  
+  (ok true))))
+
+(define-public (withdraw-from-portfolio (portfolio-id uint) (withdrawal-amount uint))
+  (let (
+    (creator tx-sender)
+    (portfolio-data (map-get? license-portfolios portfolio-id))
+  )
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (valid-amount withdrawal-amount) ERR-INVALID-INPUT)
+  (asserts! (is-some portfolio-data) ERR-LICENSE-NOT-FOUND)
+  
+  (let (
+    (portfolio (unwrap! portfolio-data ERR-LICENSE-NOT-FOUND))
+    (portfolio-value (get value portfolio))
+    (creator-balance (default-to u0 (map-get? token-balances-forge creator)))
+  )
+  (asserts! (is-eq (get creator portfolio) creator) ERR-UNAUTHORIZED)
+  (asserts! (>= portfolio-value withdrawal-amount) ERR-INSUFFICIENT-FUNDS)
+  
+  ;; Execute withdrawal
+  (map-set token-balances-forge creator (+ creator-balance withdrawal-amount))
+  (map-set license-portfolios portfolio-id 
+           (merge portfolio {value: (- portfolio-value withdrawal-amount)}))
+  
+  (ok true))))
+
+(define-public (optimize-portfolio (portfolio-id uint))
+  (let (
+    (creator tx-sender)
+    (portfolio-data (map-get? license-portfolios portfolio-id))
+  )
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (is-some portfolio-data) ERR-LICENSE-NOT-FOUND)
+  
+  (let (
+    (portfolio (unwrap! portfolio-data ERR-LICENSE-NOT-FOUND))
+    (time-since-last-claim (- block-height (get last-yield-claim portfolio)))
+    (calculated-yield (/ time-since-last-claim u50))
+  )
+  (asserts! (is-eq (get creator portfolio) creator) ERR-UNAUTHORIZED)
+  (asserts! (> time-since-last-claim COOLDOWN-BLOCKS) ERR-COOLDOWN-ACTIVE)
+  
+  (map-set license-portfolios portfolio-id 
+           (merge portfolio {
+             last-yield-claim: block-height,
+             annual-yield: calculated-yield
+           }))
+  
+  (ok calculated-yield))))
+
+;; === GOVERNANCE SYSTEM ===
+(define-public (submit-dao-proposal (description (string-ascii 512)))
+  (let (
+    (creator tx-sender)
+    (proposal-id (var-get proposal-counter))
+    (voting-power (default-to u0 (map-get? creator-voting-weight creator)))
+  )
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (> voting-power u0) ERR-UNAUTHORIZED)
+  (asserts! (> (len description) u0) ERR-PROPOSAL-INVALID)
+  
+  (map-set dao-proposals proposal-id {
+    author: creator,
+    proposal-text: description,
+    affirmative-votes: u0,
+    negative-votes: u0,
+    proposal-executed: false,
+    created-block: block-height,
+    voting-ends: (+ block-height GOVERNANCE-DELAY),
+    execution-delay: (+ block-height (* GOVERNANCE-DELAY u2))
+  })
+  
+  (var-set proposal-counter (+ proposal-id u1))
+  
+  (ok proposal-id)))
+
+(define-public (cast-vote (proposal-id uint) (support bool))
+  (let (
+    (voter tx-sender)
+    (voter-weight (default-to u0 (map-get? creator-voting-weight voter)))
+    (proposal-data (map-get? dao-proposals proposal-id))
+  )
+  (asserts! (protocol-operational) ERR-PROTOCOL-FROZEN)
+  (asserts! (> voter-weight u0) ERR-UNAUTHORIZED)
+  (asserts! (is-some proposal-data) ERR-PROPOSAL-INVALID)
+  
+  (let (
+    (proposal (unwrap! proposal-data ERR-PROPOSAL-INVALID))
+  )
+  (asserts! (< block-height (get voting-ends proposal)) ERR-GOVERNANCE-LOCKED)
+  (asserts! (not (get proposal-executed proposal)) ERR-PROPOSAL-INVALID)
+  
+  (if support
+    (map-set dao-proposals proposal-id 
+             (merge proposal {affirmative-votes: (+ (get affirmative-votes proposal) voter-weight)}))
+    (map-set dao-proposals proposal-id 
+             (merge proposal {negative-votes: (+ (get negative-votes proposal) voter-weight)})))
+  
+  (ok true))))
+
+;; === READ-ONLY QUERY FUNCTIONS ===
+(define-read-only (get-forge-balance (creator principal))
+  (default-to u0 (map-get? token-balances-forge creator)))
+
+(define-read-only (get-media-balance (creator principal))
+  (default-to u0 (map-get? token-balances-media creator)))
+
+(define-read-only (get-creator-reputation (creator principal))
+  (compute-reputation creator))
+
+(define-read-only (get-protocol-metrics)
+  {
+    active: (var-get protocol-active),
+    emergency-mode: (var-get emergency-mode),
+    market-instability: (var-get market-instability),
+    forge-supply: (var-get forge-token-supply),
+    media-supply: (var-get media-token-supply)
+  })
+
+(define-read-only (get-portfolio-details (portfolio-id uint))
+  (map-get? license-portfolios portfolio-id))
+
+(define-read-only (get-collateral-position (creator principal))
+  (map-get? collateral-positions creator))
+
+(define-read-only (get-dao-proposal-info (proposal-id uint))
+  (map-get? dao-proposals proposal-id))
+
+(define-read-only (calculate-required-collateral (creator principal))
+  (calculate-collateral-requirement creator))
+
+(define-read-only (get-creator-profile (creator principal))
+  (map-get? creator-profiles creator))
